@@ -110,13 +110,18 @@ jobs:
       - name: Uninstall
         run: |
           $dir = "$env:LOCALAPPDATA\Programs\Unboxed"
-          Start-Process "$dir\Unboxed.exe" -ArgumentList '--uninstall', '--quiet' -Wait
-          for ($i = 0; $i -lt 30 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
-          Get-Content "$env:TEMP\unboxed-uninstall.log" -ErrorAction SilentlyContinue
-          if (Test-Path $dir) { Get-ChildItem $dir -Recurse | Select-Object -First 20 FullName; throw 'Install folder was not removed' }
-          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed') { throw 'Settings > Apps entry not removed' }
-          if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.zip\shell\Unboxed.1Here') { throw 'Right-click menu not removed' }
-          if (Test-Path ([IO.Path]::Combine([Environment]::GetFolderPath('Programs'), 'Unboxed.lnk'))) { throw 'Start Menu shortcut not removed' }
+          $p = Start-Process "$dir\Unboxed.exe" -ArgumentList '--uninstall', '--quiet' -PassThru
+          $p.WaitForExit()
+          Write-Host "app exit code: $($p.ExitCode)"
+          for ($i = 0; $i -lt 40 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
+          Write-Host '--- app log';      Write-Host (Get-Content "$env:TEMP\unboxed-uninstall-app.log" -Raw -ErrorAction SilentlyContinue)
+          Write-Host '--- cleanup log';  Write-Host (Get-Content "$env:TEMP\unboxed-uninstall.log" -Raw -ErrorAction SilentlyContinue)
+          $problems = @()
+          if (Test-Path $dir) { Write-Host (Get-ChildItem $dir -Recurse | Select-Object -First 15 | Out-String); $problems += 'install folder not removed' }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed') { $problems += 'Settings > Apps entry not removed' }
+          if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.zip\shell\Unboxed.1Here') { $problems += 'right-click menu not removed' }
+          if (Test-Path ([IO.Path]::Combine([Environment]::GetFolderPath('Programs'), 'Unboxed.lnk'))) { $problems += 'Start Menu shortcut not removed' }
+          if ($problems) { throw ($problems -join '; ') }
           Write-Host 'Uninstall OK'
 
   release:

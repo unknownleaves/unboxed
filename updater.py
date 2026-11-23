@@ -145,12 +145,7 @@ Remove-Item -LiteralPath {_ps_quote(work)} -Recurse -Force -ErrorAction Silently
 """
     with open(script, "w", encoding="utf-8-sig") as f:
         f.write(ps)
-    env = dict(os.environ)
-    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_PROCESS_GROUP | NO_WINDOW
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                      "-WindowStyle", "Hidden", "-File", script],
-                     creationflags=flags, close_fds=True, env=env, cwd=tempfile.gettempdir())
+    _spawn_detached_ps(script)
 
 
 def schedule_uninstall() -> None:
@@ -186,7 +181,32 @@ Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 """
     with open(script, "w", encoding="utf-8-sig") as f:
         f.write(ps)
-    flags = 0x00000008 | 0x00000200 | 0x08000000
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                      "-WindowStyle", "Hidden", "-File", script],
-                     creationflags=flags, close_fds=True, cwd=tempfile.gettempdir())
+    note = os.path.join(tempfile.gettempdir(), "unboxed-uninstall-app.log")
+    with open(note, "w", encoding="utf-8") as f:
+        f.write(f"target={target}\nwhole={whole}\nscript={script}\n")
+        try:
+            p = _spawn_detached_ps(script)
+            f.write(f"started powershell pid={p.pid}\n")
+        except Exception as ex:  # noqa: BLE001
+            f.write(f"FAILED to start powershell: {ex!r}\n")
+            raise
+
+
+def _spawn_detached_ps(script: str) -> subprocess.Popen:
+    """Start a hidden PowerShell script that outlives this process."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("_PYI", "_MEI", "TCL_", "TK_"))}
+    system_ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                             "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    exe = system_ps if os.path.isfile(system_ps) else "powershell.exe"
+    flags = 0x00000008 | 0x00000200 | 0x01000000  # DETACHED | NEW_PROCESS_GROUP | BREAKAWAY_FROM_JOB
+    args = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+            "-File", script]
+    try:
+        return subprocess.Popen(args, creationflags=flags, close_fds=True, env=env,
+                                cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        # breakaway not allowed in this job object: start normally
+        return subprocess.Popen(args, creationflags=flags & ~0x01000000, close_fds=True, env=env,
+                                cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

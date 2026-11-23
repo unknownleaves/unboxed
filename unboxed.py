@@ -1846,9 +1846,9 @@ def uninstall(quiet: bool) -> None:
             win_integrate(False)
         except Exception as ex:  # noqa: BLE001
             log_error(f"uninstall: {ex}")
-        if getattr(sys, "frozen", False):
-            updater.schedule_uninstall()
     shutil.rmtree(config_dir(), ignore_errors=True)
+    if IS_WIN and getattr(sys, "frozen", False):
+        updater.schedule_uninstall()
     if r is not None:
         messagebox.showinfo(APP_NAME, "Unboxed has been removed.")
         r.destroy()
