@@ -148,8 +148,35 @@ Remove-Item -LiteralPath {_ps_quote(work)} -Recurse -Force -ErrorAction Silently
     _spawn_detached_ps(script)
 
 
+def remove_shortcuts_and_entry() -> None:
+    """Remove Start Menu/desktop shortcuts and the Settings > Apps entry (Windows)."""
+    import ctypes
+    from ctypes import wintypes
+    import winreg
+
+    def known_folder(csidl):
+        buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        return buf.value
+
+    for csidl in (0x0002, 0x0010):  # CSIDL_PROGRAMS, CSIDL_DESKTOPDIRECTORY
+        try:
+            os.remove(os.path.join(known_folder(csidl), "Unboxed.lnk"))
+        except OSError:
+            pass
+    try:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER,
+                         r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed")
+    except OSError:
+        pass
+
+
 def schedule_uninstall() -> None:
     """Remove shortcuts, menu entries and the install folder after the app exits."""
+    try:
+        remove_shortcuts_and_entry()
+    except Exception:  # noqa: BLE001  (the script below retries)
+        pass
     target = install_dir()
     script = os.path.join(tempfile.gettempdir(), "unboxed-uninstall.ps1")
     # Delete the whole folder only when it is the standard install location.
@@ -201,12 +228,13 @@ def _spawn_detached_ps(script: str) -> subprocess.Popen:
     flags = 0x00000008 | 0x00000200 | 0x01000000  # DETACHED | NEW_PROCESS_GROUP | BREAKAWAY_FROM_JOB
     args = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
             "-File", script]
+    out = open(os.path.splitext(script)[0] + ".out.txt", "w", encoding="utf-8")
+    kw = dict(close_fds=True, env=env, cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
+              stdout=out, stderr=subprocess.STDOUT)
     try:
-        return subprocess.Popen(args, creationflags=flags, close_fds=True, env=env,
-                                cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return subprocess.Popen(args, creationflags=flags, **kw)
     except OSError:
         # breakaway not allowed in this job object: start normally
-        return subprocess.Popen(args, creationflags=flags & ~0x01000000, close_fds=True, env=env,
-                                cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return subprocess.Popen(args, creationflags=flags & ~0x01000000, **kw)
+    finally:
+        out.close()

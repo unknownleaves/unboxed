@@ -116,6 +116,8 @@ jobs:
           for ($i = 0; $i -lt 40 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
           Write-Host '--- app log';      Write-Host (Get-Content "$env:TEMP\unboxed-uninstall-app.log" -Raw -ErrorAction SilentlyContinue)
           Write-Host '--- cleanup log';  Write-Host (Get-Content "$env:TEMP\unboxed-uninstall.log" -Raw -ErrorAction SilentlyContinue)
+          Write-Host '--- helper output'; Write-Host (Get-Content "$env:TEMP\unboxed-uninstall.out.txt" -Raw -ErrorAction SilentlyContinue)
+          Write-Host "--- script still there: $(Test-Path "$env:TEMP\unboxed-uninstall.ps1")"
           $problems = @()
           if (Test-Path $dir) { Write-Host (Get-ChildItem $dir -Recurse | Select-Object -First 15 | Out-String); $problems += 'install folder not removed' }
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed') { $problems += 'Settings > Apps entry not removed' }
