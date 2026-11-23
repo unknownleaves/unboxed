@@ -559,6 +559,8 @@ class App:
         self.temp_dirs: list = []
         self.buttons: list = []
         self.sort_state = ("name", False)
+        self._last_p = None
+        self._t0 = time.time()
 
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96.0)
         self.dark = self._want_dark()
@@ -1303,7 +1305,9 @@ class App:
                         self.error(val)
         except queue.Empty:
             pass
-        self.root.after(60, self._poll)
+        finally:
+            # always reschedule, even if a callback above raised
+            self.root.after(60, self._poll)
 
     def _finish(self):
         self.busy = False
