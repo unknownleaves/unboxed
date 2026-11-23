@@ -20,6 +20,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 25
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
@@ -79,6 +80,7 @@ jobs:
     # Runs install.ps1 exactly like a user would, then uninstalls.
     needs: build
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -108,9 +110,12 @@ jobs:
           if ($p.ExitCode -ne 0) { exit 1 }
 
       - name: In-app update (swap files and restart)
+        timeout-minutes: 4
         run: |
           $dir = "$env:LOCALAPPDATA\Programs\Unboxed"
-          Start-Process "$dir\Unboxed.exe" -ArgumentList '--test-update', "$PWD\Unboxed-windows-x64.zip", '9.9.9' -Wait
+          # WaitForExit, not -Wait: -Wait would also wait for the restarted app window
+          $p = Start-Process "$dir\Unboxed.exe" -ArgumentList '--test-update', "$PWD\Unboxed-windows-x64.zip", '9.9.9' -PassThru
+          $p.WaitForExit()
           $ok = $false
           for ($i = 0; $i -lt 60; $i++) {
             $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed').DisplayVersion
