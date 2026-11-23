@@ -214,6 +214,12 @@ Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
         try:
             p = _spawn_detached_ps(script)
             f.write(f"started powershell pid={p.pid}\n")
+            try:
+                import time
+                time.sleep(1.0)
+                f.write(f"helper alive after 1s: {p.poll() is None} (exit={p.poll()})\n")
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as ex:  # noqa: BLE001
             f.write(f"FAILED to start powershell: {ex!r}\n")
             raise
@@ -225,9 +231,10 @@ def _spawn_detached_ps(script: str) -> subprocess.Popen:
     system_ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
                              "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     exe = system_ps if os.path.isfile(system_ps) else "powershell.exe"
-    flags = 0x00000008 | 0x00000200 | 0x01000000  # DETACHED | NEW_PROCESS_GROUP | BREAKAWAY_FROM_JOB
-    args = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-            "-File", script]
+    # A hidden console (CREATE_NO_WINDOW), not DETACHED_PROCESS: PowerShell exits
+    # immediately when started with no console at all.
+    flags = 0x08000000 | 0x00000200 | 0x01000000  # NO_WINDOW | NEW_PROCESS_GROUP | BREAKAWAY_FROM_JOB
+    args = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script]
     out = open(os.path.splitext(script)[0] + ".out.txt", "w", encoding="utf-8")
     kw = dict(close_fds=True, env=env, cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
               stdout=out, stderr=subprocess.STDOUT)
