@@ -872,11 +872,13 @@ def create_archive(out_path: str, inputs: List[str], fmt: str, opts: Options,
                                        "(included in the built app). Or choose 7z.")
                 zf = zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=level)
             with zf:
+                # pyzipper needs its own ZipInfo class; the stdlib one breaks it
+                info_cls = getattr(zf, "zipinfo_cls", zipfile.ZipInfo)
                 for p, arc in items:
                     if arc.endswith("/"):
-                        zf.writestr(zipfile.ZipInfo.from_file(p, arc), b"")
+                        zf.writestr(info_cls.from_file(p, arc), b"")
                         continue
-                    zi = zipfile.ZipInfo.from_file(p, arc)
+                    zi = info_cls.from_file(p, arc)
                     zi.compress_type = zipfile.ZIP_DEFLATED
                     with open(p, "rb") as src, zf.open(zi, "w", force_zip64=True) as dst:
                         _copy_stream(src, dst, opts, state, arc)
