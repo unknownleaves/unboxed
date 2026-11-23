@@ -2036,6 +2036,10 @@ def main():
     if args and args[0] == "--uninstall":
         uninstall("--quiet" in args)
         return 0
+    if args and args[0] == "--test-update" and len(args) > 2:  # used by GitHub Actions
+        stage = updater.prepare(os.path.abspath(args[1]))
+        updater.apply_and_restart(stage, args[2])
+        return 0
     if args and args[0] == "--selftest":
         return selftest(args[1] if len(args) > 1 else None)
     win_prepare_process()

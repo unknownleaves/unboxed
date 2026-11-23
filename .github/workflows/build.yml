@@ -107,6 +107,23 @@ jobs:
           Get-Content selftest-installed.txt -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { exit 1 }
 
+      - name: In-app update (swap files and restart)
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\Unboxed"
+          Start-Process "$dir\Unboxed.exe" -ArgumentList '--test-update', "$PWD\Unboxed-windows-x64.zip", '9.9.9' -Wait
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed').DisplayVersion
+            $restarted = Get-CimInstance Win32_Process -Filter "Name='Unboxed.exe'" | Where-Object { $_.CommandLine -like '*--updated*' }
+            if ($v -eq '9.9.9' -and $restarted) { $ok = $true; break }
+            Start-Sleep 1
+          }
+          Write-Host (Get-Content "$env:TEMP\unboxed-update.log" -Raw -ErrorAction SilentlyContinue)
+          if (-not $ok) { throw "Update did not complete (version=$v, restarted=$([bool]$restarted))" }
+          Get-Process Unboxed -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
+          Write-Host 'Update OK: files swapped, version recorded, app restarted'
+
       - name: Uninstall
         run: |
           $dir = "$env:LOCALAPPDATA\Programs\Unboxed"

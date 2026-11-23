@@ -92,7 +92,7 @@ def download(url: str, dest: str, progress: Optional[Callable[[int, int, str], N
 
 def prepare(zip_path: str) -> str:
     """Unpack a downloaded update and check it looks like a real build."""
-    stage = os.path.join(os.path.dirname(zip_path), "new")
+    stage = os.path.join(tempfile.mkdtemp(prefix="unboxed-update-"), "new")
     shutil.rmtree(stage, ignore_errors=True)
     with zipfile.ZipFile(zip_path) as z:
         for n in z.namelist():
