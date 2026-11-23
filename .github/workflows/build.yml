@@ -112,7 +112,8 @@ jobs:
           $dir = "$env:LOCALAPPDATA\Programs\Unboxed"
           Start-Process "$dir\Unboxed.exe" -ArgumentList '--uninstall', '--quiet' -Wait
           for ($i = 0; $i -lt 30 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
-          if (Test-Path $dir) { throw 'Install folder was not removed' }
+          Get-Content "$env:TEMP\unboxed-uninstall.log" -ErrorAction SilentlyContinue
+          if (Test-Path $dir) { Get-ChildItem $dir -Recurse | Select-Object -First 20 FullName; throw 'Install folder was not removed' }
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed') { throw 'Settings > Apps entry not removed' }
           if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.zip\shell\Unboxed.1Here') { throw 'Right-click menu not removed' }
           if (Test-Path ([IO.Path]::Combine([Environment]::GetFolderPath('Programs'), 'Unboxed.lnk'))) { throw 'Start Menu shortcut not removed' }

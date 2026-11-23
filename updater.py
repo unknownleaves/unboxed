@@ -159,19 +159,30 @@ def schedule_uninstall() -> None:
     script = os.path.join(tempfile.gettempdir(), "unboxed-uninstall.ps1")
     # Delete the whole folder only when it is the standard install location.
     whole = os.path.normcase(target).endswith(os.path.normcase(os.path.join("Programs", "Unboxed")))
-    remove = (f"Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue" if whole else
-              "Remove-Item -LiteralPath (Join-Path $target '_internal') -Recurse -Force -ErrorAction SilentlyContinue\n"
-              "Remove-Item -LiteralPath (Join-Path $target 'Unboxed.exe') -Force -ErrorAction SilentlyContinue")
+    items = "@($target)" if whole else "@((Join-Path $target '_internal'), (Join-Path $target 'Unboxed.exe'))"
+    remove = f"""
+for ($i = 0; $i -lt 30; $i++) {{
+    $left = {items} | Where-Object {{ Test-Path -LiteralPath $_ }}
+    if (-not $left) {{ Write-Output 'removed install folder'; break }}
+    foreach ($p in $left) {{
+        try {{ Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop }}
+        catch {{ Write-Output "retry $i : $($_.Exception.Message)"; Start-Sleep -Milliseconds 700 }}
+    }}
+}}"""
+    log = os.path.join(tempfile.gettempdir(), "unboxed-uninstall.log")
     ps = f"""
 $target = {_ps_quote(target)}
+Start-Transcript -Path {_ps_quote(log)} -Force | Out-Null
+Write-Output "uninstalling from $target (waiting for pid {os.getpid()})"
 Wait-Process -Id {os.getpid()} -Timeout 30 -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 400
+Start-Sleep -Milliseconds 600
 foreach ($p in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {{
     Remove-Item -LiteralPath (Join-Path $p 'Unboxed.lnk') -Force -ErrorAction SilentlyContinue
 }}
 Remove-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Unboxed' -Recurse -Force -ErrorAction SilentlyContinue
 {remove}
-Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+Stop-Transcript | Out-Null
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 """
     with open(script, "w", encoding="utf-8-sig") as f:
         f.write(ps)
