@@ -1,0 +1,142 @@
+name: Build, test & release
+
+# Every push builds the Windows app and tests it on a real Windows machine.
+# When version.py has a version that hasn't been released yet, a GitHub Release
+# is published automatically - installed copies of Unboxed then offer the update.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "version=$(python -c 'from version import VERSION; print(VERSION)')" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pyinstaller
+
+      - name: Engine tests
+        run: python -m unittest discover tests -v
+
+      - name: GUI self-test (from source)
+        run: |
+          python unboxed.py --selftest selftest-source.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content selftest-source.txt -ErrorAction SilentlyContinue; exit 1 }
+
+      - name: Bundle 7-Zip engine (RAR, ISO, CAB support)
+        run: |
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Copy-Item "$env:ProgramFiles\7-Zip\7z.exe", "$env:ProgramFiles\7-Zip\7z.dll", "$env:ProgramFiles\7-Zip\License.txt" bin\
+          Copy-Item bin\License.txt bin\7-Zip-License.txt
+
+      - name: Build Unboxed.exe
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name Unboxed
+          --icon assets\icon.ico
+          --add-data "assets;assets"
+          --add-binary "bin\7z.exe;bin" --add-binary "bin\7z.dll;bin" --add-data "bin\7-Zip-License.txt;bin"
+          --collect-all tkinterdnd2 --collect-all py7zr --hidden-import pyzipper
+          unboxed.py
+
+      - name: GUI self-test (built app)
+        run: |
+          $p = Start-Process -FilePath dist\Unboxed\Unboxed.exe -ArgumentList '--selftest', "$PWD\selftest-exe.txt" -Wait -PassThru
+          Get-Content selftest-exe.txt -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { Write-Error "Built app self-test failed (exit $($p.ExitCode))"; exit 1 }
+
+      - name: Package
+        run: Compress-Archive -Path dist\Unboxed\* -DestinationPath Unboxed-windows-x64.zip -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Unboxed-windows-x64
+          path: Unboxed-windows-x64.zip
+          if-no-files-found: error
+
+  install-test:
+    # Runs install.ps1 exactly like a user would, then uninstalls.
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Unboxed-windows-x64
+
+      - name: Install with install.ps1
+        env:
+          UNBOXED_ZIP: ${{ github.workspace }}\Unboxed-windows-x64.zip
+          UNBOXED_VERSION: ${{ needs.build.outputs.version }}
+          UNBOXED_NO_LAUNCH: '1'
+        run: |
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          $exe = "$env:LOCALAPPDATA\Programs\Unboxed\Unboxed.exe"
+          if (-not (Test-Path $exe)) { throw 'Unboxed.exe was not installed' }
+          if (-not (Test-Path ([IO.Path]::Combine([Environment]::GetFolderPath('Programs'), 'Unboxed.lnk')))) { throw 'No Start Menu shortcut' }
+          if (-not (Test-Path ([IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'Unboxed.lnk')))) { throw 'No desktop shortcut' }
+          $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed'
+          if ($u.DisplayVersion -ne $env:UNBOXED_VERSION) { throw "Wrong version in Settings > Apps: $($u.DisplayVersion)" }
+          if (-not (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.zip\shell\Unboxed.1Here\command')) { throw 'Right-click menu not registered' }
+          Write-Host 'Install OK'
+
+      - name: Installed app self-test
+        run: |
+          $p = Start-Process "$env:LOCALAPPDATA\Programs\Unboxed\Unboxed.exe" -ArgumentList '--selftest', "$PWD\selftest-installed.txt" -Wait -PassThru
+          Get-Content selftest-installed.txt -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: Uninstall
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\Unboxed"
+          Start-Process "$dir\Unboxed.exe" -ArgumentList '--uninstall', '--quiet' -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
+          if (Test-Path $dir) { throw 'Install folder was not removed' }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Unboxed') { throw 'Settings > Apps entry not removed' }
+          if (Test-Path 'HKCU:\Software\Classes\SystemFileAssociations\.zip\shell\Unboxed.1Here') { throw 'Right-click menu not removed' }
+          if (Test-Path ([IO.Path]::Combine([Environment]::GetFolderPath('Programs'), 'Unboxed.lnk'))) { throw 'Start Menu shortcut not removed' }
+          Write-Host 'Uninstall OK'
+
+  release:
+    needs: [build, install-test]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Unboxed-windows-x64
+
+      - name: Publish release if this version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$VERSION is already released. Bump VERSION in version.py to publish an update."
+            exit 0
+          fi
+          gh release create "v$VERSION" Unboxed-windows-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Unboxed $VERSION" --generate-notes
+          echo "Published v$VERSION"
